@@ -12,8 +12,8 @@ android {
         minSdk = 24
         //noinspection EditedTargetSdkVersion
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0.1"
+        versionCode = 13
+        versionName = "1.1.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -52,7 +52,6 @@ dependencies {
 
 // Core library for Kotlin extensions and utilities
     implementation("androidx.core:core-ktx:1.9.0")
-
 // Lifecycle components for using ViewModel and LiveData in a Kotlin-friendly way
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.6.2")
 
@@ -61,7 +60,7 @@ dependencies {
 
 // Bill of Materials (BOM) for all Compose libraries, ensures compatible versions
     implementation(platform("androidx.compose:compose-bom:2023.03.00"))
-
+    implementation ("com.contrarywind:Android-PickerView:4.1.9")
 // Compose UI framework
     implementation("androidx.compose.ui:ui")
 
@@ -77,6 +76,10 @@ dependencies {
 // Media3 ExoPlayer for handling media playback
     implementation("androidx.media3:media3-exoplayer:1.2.0")
     implementation("androidx.media3:media3-ui:1.2.0")
+    implementation("androidx.compose.ui:ui-text-android:1.5.4")
+
+    implementation("com.squareup.retrofit2:retrofit:2.9.0")
+    implementation("com.squareup.retrofit2:converter-gson:2.9.0")
 
 // JUnit for unit testing
     testImplementation("junit:junit:4.13.2")

@@ -4,5 +4,7 @@ data class VideoStatues(
     val isVideoEnable:Boolean = false,
     val volume: Boolean = false,
     val videoPlayer:Int = 1,
-    val videoUrl: String? = null,
+    val codecType:Boolean = false,
+    val isLiveStreamingEnabled:Boolean = false,
+    val liveURL:String = "rtmp://ns8.indexforce.com/home/mystream"
 )

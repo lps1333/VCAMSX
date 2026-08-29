@@ -1,13 +1,18 @@
 package com.wangyiheng.vcamsx.utils
 
+import android.content.ContentValues
 import android.content.ContentValues.TAG
-import android.graphics.ImageFormat
+import android.graphics.*
 import android.media.*
+import android.net.Uri
 import android.util.Log
 import android.view.Surface
 import com.wangyiheng.vcamsx.MainHook
+import com.wangyiheng.vcamsx.MainHook.Companion.context
 import de.robv.android.xposed.XposedBridge
+import java.io.ByteArrayOutputStream
 import java.io.IOException
+import java.nio.ByteBuffer
 import java.util.concurrent.LinkedBlockingQueue
 
 class VideoToFrames : Runnable {
@@ -15,11 +20,11 @@ class VideoToFrames : Runnable {
     private var stopDecode = false
 
     private var outputImageFormat: OutputImageFormat? = null
-    private var videoFilePath: String? = null
+    private var videoFilePath: Any? = null
     private var childThread: Thread? = null
     private var throwable: Throwable? = null // 定义 throwable 变量
     private val decodeColorFormat = MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible
-    private val play_surf: Surface? = null
+    private var play_surf: Surface? = null
     private val DEFAULT_TIMEOUT_US: Long = 10000
     private val callback: Callback? = null
     private val mQueue: LinkedBlockingQueue<ByteArray>? = null
@@ -40,8 +45,13 @@ class VideoToFrames : Runnable {
         outputImageFormat = imageFormat
     }
 
+    fun set_surface(player_surface:Surface){
+        if(player_surface != null){
+            play_surf = player_surface
+        }
+    }
 
-    fun decode(videoFilePath: String) {
+    fun decode(videoFilePath: Any) {
         this.videoFilePath = videoFilePath
         if (childThread == null) {
             childThread = Thread(this, "decode").apply {
@@ -60,13 +70,17 @@ class VideoToFrames : Runnable {
         }
     }
 
-    private fun videoDecode(videoFilePath: String) {
+    private fun videoDecode(videoPath: Any) {
         var extractor: MediaExtractor? = null
         var decoder: MediaCodec? = null
 
         try {
             extractor = MediaExtractor().apply {
-                setDataSource(videoFilePath)
+                when (videoPath) {
+                    is String -> setDataSource(videoPath) // 当参数是 String 时
+                    is Uri -> context?.let { setDataSource(it, videoPath, null) } // 当参数是 Uri 时
+                    else -> throw IllegalArgumentException("Unsupported video path type")
+                }
             }
             val trackIndex = selectTrack(extractor)
             if (trackIndex < 0) {
@@ -81,7 +95,7 @@ class VideoToFrames : Runnable {
                 mediaFormat.setInteger(MediaFormat.KEY_COLOR_FORMAT, decodeColorFormat)
                 XposedBridge.log("&#8203;``【oaicite:3】``&#8203;&#8203;``【oaicite:2】``&#8203;set decode color format to type $decodeColorFormat")
             } else {
-                Log.i(TAG, "unable to set decode color format, color format type $decodeColorFormat not supported")
+                Log.i(ContentValues.TAG, "unable to set decode color format, color format type $decodeColorFormat not supported")
                 XposedBridge.log("&#8203;``【oaicite:1】``&#8203;&#8203;``【oaicite:0】``&#8203;unable to set decode color format, color format type $decodeColorFormat not supported")
             }
             decodeFramesToImage(decoder, extractor, mediaFormat)
@@ -118,7 +132,6 @@ class VideoToFrames : Runnable {
     }
 
     private fun showSupportedColorFormat(caps: MediaCodecInfo.CodecCapabilities) {
-        print("supported color format: ")
         for (c in caps.colorFormats) {
             print("$c\t")
         }
@@ -178,7 +191,8 @@ class VideoToFrames : Runnable {
                         mQueue?.put(arr)
 
                         if (outputImageFormat != null) {
-                            MainHook.data_buffer = getDataFromImage(image, COLOR_FormatNV21)
+//                            MainHook.data_buffer  =bitmapToYUV( imageToBitmap(image))
+                            MainHook.data_buffer = getDataFromImage(image)
                         }
                         image.close()
                     }
@@ -198,80 +212,212 @@ class VideoToFrames : Runnable {
         }
         callback?.onFinishDecode()
     }
-    private fun getDataFromImage(image: Image, colorFormat: Int): ByteArray {
-        if (colorFormat != COLOR_FormatI420 && colorFormat != COLOR_FormatNV21) {
-            throw IllegalArgumentException("only support COLOR_FormatI420 and COLOR_FormatNV21")
+
+    fun logImageFormat(image: Image) {
+        val format = image.format
+        val formatString = when (format) {
+            ImageFormat.YUV_420_888 -> "YUV_420_888"
+            ImageFormat.JPEG -> "JPEG"
+            ImageFormat.RAW_SENSOR -> "RAW_SENSOR"
+            ImageFormat.NV21 -> "NV21"
+            ImageFormat.YV12 -> "YV12"
+            ImageFormat.RAW_PRIVATE -> "RAW_PRIVATE"
+            ImageFormat.RAW10 -> "RAW10"
+            ImageFormat.RAW12 -> "RAW12"
+            ImageFormat.DEPTH_JPEG -> "DEPTH_JPEG"
+            ImageFormat.DEPTH16 -> "DEPTH16"
+            ImageFormat.DEPTH_POINT_CLOUD -> "DEPTH_POINT_CLOUD"
+            // 添加更多格式根据需要
+            else -> "Unknown format: $format"
         }
+        Log.d("vcamsx", "Image format is $formatString")
+    }
+
+    fun imageToBitmap(image: Image): Bitmap {
+        Log.d("vcamsx",image.format.toString())
+        val yBuffer = image.planes[0].buffer // Y
+        val uBuffer = image.planes[1].buffer // U
+        val vBuffer = image.planes[2].buffer // V
+
+        val ySize = yBuffer.remaining()
+        val uSize = uBuffer.remaining()
+        val vSize = vBuffer.remaining()
+
+        val nv21 = ByteArray(ySize + uSize + vSize)
+
+        // YUV_420_888数据转NV21
+        yBuffer.get(nv21, 0, ySize)
+        vBuffer.get(nv21, ySize, vSize)
+        uBuffer.get(nv21, ySize + vSize, uSize)
+
+        val yuvImage = YuvImage(nv21, ImageFormat.NV21, image.width, image.height, null)
+        val out = ByteArrayOutputStream()
+        yuvImage.compressToJpeg(Rect(0, 0, yuvImage.width, yuvImage.height), 75, out)
+
+        val imageBytes = out.toByteArray()
+        return BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
+    }
+
+//    fun bitmapToByteArray(bitmap: Bitmap, format: Bitmap.CompressFormat, quality: Int): ByteArray {
+//        val stream = ByteArrayOutputStream()
+//        bitmap.compress(format, quality, stream)
+//        return stream.toByteArray()
+//    }
+
+    fun bitmapToYUV(bitmap: Bitmap): ByteArray {
+        val width = bitmap.width
+        val height = bitmap.height
+        val intArray = IntArray(width * height)
+        bitmap.getPixels(intArray, 0, width, 0, 0, width, height)
+
+        val yuvArray = ByteArray(width * height * 3)
+
+        var index = 0
+        intArray.forEach { color ->
+            val r = (color shr 16) and 0xFF
+            val g = (color shr 8) and 0xFF
+            val b = color and 0xFF
+
+            // Apply the RGB to YUV formula
+            val y = (0.257 * r) + (0.504 * g) + (0.098 * b) + 16
+            val u = -(0.148 * r) - (0.291 * g) + (0.439 * b) + 128
+            val v = (0.439 * r) - (0.368 * g) - (0.071 * b) + 128
+
+            // Assuming the YUV format is YUV444, store each Y, U, and V value sequentially
+            yuvArray[index++] = y.toInt().toByte()
+            yuvArray[index++] = u.toInt().toByte()
+            yuvArray[index++] = v.toInt().toByte()
+        }
+
+        return yuvArray
+    }
+//    private fun getDataFromImage(image: Image, colorFormat: Int): ByteArray {
+//        if (colorFormat != COLOR_FormatI420 && colorFormat != COLOR_FormatNV21) {
+//            throw IllegalArgumentException("only support COLOR_FormatI420 and COLOR_FormatNV21")
+//        }
+//
+//        logImageFormat(image)
+//        if (!isImageFormatSupported(image)) {
+//            throw RuntimeException("can't convert Image to byte array, format ${image.format}")
+//        }
+//
+//
+//        val crop = image.cropRect
+//        val format = image.format
+//        val width = crop.width()
+//        val height = crop.height()
+//        val planes = image.planes
+//        val data = ByteArray(width * height * ImageFormat.getBitsPerPixel(format) / 8)
+//        val rowData = ByteArray(planes[0].rowStride)
+//
+//        var channelOffset = 0
+//        var outputStride = 1
+//        for (i in planes.indices) {
+//            when (i) {
+//                0 -> {
+//                    channelOffset = 0
+//                    outputStride = 1
+//                }
+//                1 -> {
+//                    channelOffset = if (colorFormat == COLOR_FormatI420) width * height else width * height + 1
+//                    outputStride = 2
+//                }
+//                2 -> {
+//                    channelOffset = if (colorFormat == COLOR_FormatI420) (width * height * 1.25).toInt() else width * height
+//                    outputStride = 2
+//                }
+//            }
+//            val buffer = planes[i].buffer
+//            val rowStride = planes[i].rowStride
+//            val pixelStride = planes[i].pixelStride
+//
+//            val shift = if (i == 0) 0 else 1
+//            val w = width shr shift
+//            val h = height shr shift
+//            buffer.position(rowStride * (crop.top shr shift) + pixelStride * (crop.left shr shift))
+//            for (row in 0 until h) {
+//                val length: Int
+//                if (pixelStride == 1 && outputStride == 1) {
+//                    length = w
+//                    buffer.get(data, channelOffset, length)
+//                    channelOffset += length
+//                } else {
+//                    length = (w - 1) * pixelStride + 1
+//                    buffer.get(rowData, 0, length)
+//                    for (col in 0 until w) {
+//                        data[channelOffset] = rowData[col * pixelStride]
+//                        channelOffset += outputStride
+//                    }
+//                }
+//                if (row < h - 1) {
+//                    buffer.position(buffer.position() + rowStride - length)
+//                }
+//            }
+//        }
+//        return data
+//    }
+
+    private fun getDataFromImage(image: Image): ByteArray {
+
+        logImageFormat(image)
         if (!isImageFormatSupported(image)) {
             throw RuntimeException("can't convert Image to byte array, format ${image.format}")
         }
 
         val crop = image.cropRect
-        val format = image.format
         val width = crop.width()
         val height = crop.height()
         val planes = image.planes
-        val data = ByteArray(width * height * ImageFormat.getBitsPerPixel(format) / 8)
+        val pixelFormatBits = ImageFormat.getBitsPerPixel(image.format)
+        val data = ByteArray(width * height * pixelFormatBits / 8)
         val rowData = ByteArray(planes[0].rowStride)
-        if (VERBOSE) Log.v(TAG, "get data from ${planes.size} planes")
 
-        var channelOffset = 0
-        var outputStride = 1
-        for (i in planes.indices) {
-            when (i) {
-                0 -> {
-                    channelOffset = 0
-                    outputStride = 1
-                }
-                1 -> {
-                    channelOffset = if (colorFormat == COLOR_FormatI420) width * height else width * height + 1
-                    outputStride = 2
-                }
-                2 -> {
-                    channelOffset = if (colorFormat == COLOR_FormatI420) (width * height * 1.25).toInt() else width * height
-                    outputStride = 2
-                }
-            }
-            val buffer = planes[i].buffer
-            val rowStride = planes[i].rowStride
-            val pixelStride = planes[i].pixelStride
-            if (VERBOSE) {
-                Log.v(TAG, "pixelStride $pixelStride")
-                Log.v(TAG, "rowStride $rowStride")
-                Log.v(TAG, "width $width")
-                Log.v(TAG, "height $height")
-                Log.v(TAG, "buffer size ${buffer.remaining()}")
-            }
-
-            val shift = if (i == 0) 0 else 1
-            val w = width shr shift
-            val h = height shr shift
-            buffer.position(rowStride * (crop.top shr shift) + pixelStride * (crop.left shr shift))
-            for (row in 0 until h) {
-                val length: Int
-                if (pixelStride == 1 && outputStride == 1) {
-                    length = w
-                    buffer.get(data, channelOffset, length)
-                    channelOffset += length
+        fun copyPlaneData(planeIndex: Int, buffer: ByteBuffer, rowStride: Int, pixelStride: Int, width: Int, height: Int, channelOffset: Int, outputStride: Int) {
+            var outputOffset = channelOffset
+            buffer.position(rowStride * (crop.top / 2) + pixelStride * (crop.left / 2))
+            for (row in 0 until height) {
+                val length = if (pixelStride == 1 && outputStride == 1) {
+                    width
                 } else {
-                    length = (w - 1) * pixelStride + 1
+                    (width - 1) * pixelStride + 1
+                }
+                if (length == rowStride && outputStride == 1) {
+                    buffer.get(data, outputOffset, length)
+                    outputOffset += length
+                } else {
                     buffer.get(rowData, 0, length)
-                    for (col in 0 until w) {
-                        data[channelOffset] = rowData[col * pixelStride]
-                        channelOffset += outputStride
+                    for (col in 0 until width) {
+                        data[outputOffset] = rowData[col * pixelStride]
+                        outputOffset += outputStride
                     }
                 }
-                if (row < h - 1) {
+                if (row < height - 1) {
                     buffer.position(buffer.position() + rowStride - length)
                 }
             }
-            if (VERBOSE) Log.v(TAG, "Finished reading data from plane $i")
         }
+
+        var channelOffset = 0
+        val uvHeight = height / 2
+        val uvWidth = width / 2
+
+        // Y Plane
+        copyPlaneData(0, planes[0].buffer, planes[0].rowStride, planes[0].pixelStride, width, height, channelOffset, 1)
+        channelOffset += width * height
+
+
+        copyPlaneData(1, planes[2].buffer, planes[2].rowStride, planes[2].pixelStride, uvWidth, uvHeight, channelOffset, 2)
+        copyPlaneData(2, planes[1].buffer, planes[1].rowStride, planes[1].pixelStride, uvWidth, uvHeight, channelOffset + 1, 2)
+
+
         return data
     }
 
+
+
     private fun isImageFormatSupported(image: Image): Boolean {
         val format = image.format
+        Log.d("vcamsx", "format$format")
         return when (format) {
             ImageFormat.YUV_420_888, ImageFormat.NV21, ImageFormat.YV12 -> true
             else -> false
@@ -287,5 +433,4 @@ enum class OutputImageFormat(val friendlyName: String) {
 
     override fun toString() = friendlyName
 }
-
 
